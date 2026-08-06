@@ -1020,16 +1020,17 @@ canvas.pad{
         function ajustarTamañoCanvas(canvas) {
             const ratio = Math.max(window.devicePixelRatio || 1, 1);
 
-            // Obtener el tamaño original del canvas
+            // Tamaño tal como se ve en pantalla (controlado por el CSS de .pad)
             const originalWidth = canvas.offsetWidth;
             const originalHeight = canvas.offsetHeight;
 
-            // Aumentar la altura en un 30%
-            const newHeight = originalHeight * 1.30;
-
-            // Ajustar el tamaño del canvas
+            // El buffer interno debe multiplicar ambos ejes por el mismo factor
+            // (devicePixelRatio, solo para nitidez). Si se infla un eje más que
+            // el otro, signature_pad registra los trazos desplazados respecto
+            // al dedo/lápiz y el SVG exportado queda con una proporción distinta
+            // a la del recuadro visible.
             canvas.width = originalWidth * ratio;
-            canvas.height = newHeight * ratio;
+            canvas.height = originalHeight * ratio;
 
             // Escalar el contexto del canvas
             canvas.getContext("2d").scale(ratio, ratio);
@@ -1130,11 +1131,39 @@ canvas.pad{
             const svgDataUrl = pad.toDataURL('image/svg+xml');
             const svgString = atob(svgDataUrl.split(',')[1]);
             const svgElement = new DOMParser().parseFromString(svgString, 'image/svg+xml').documentElement;
+
+            // signature_pad arma el viewBox con el tamaño crudo del buffer (multiplicado
+            // por devicePixelRatio) pero dibuja los trazos con coordenadas ya divididas por
+            // ese ratio. En pantallas de alta densidad (todos los celulares) eso deja el
+            // trazo encogido en una esquina del viewBox. Se corrige alineando el viewBox
+            // con el width/height reales que trae el propio SVG.
+            const svgWidth = parseFloat(svgElement.getAttribute('width'));
+            const svgHeight = parseFloat(svgElement.getAttribute('height'));
+            if (svgWidth > 0 && svgHeight > 0) {
+                svgElement.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+            }
+
+            // El recuadro donde se firma en pantalla no tiene la misma relación de
+            // aspecto que el recuadro reservado en el PDF, así que se encaja la firma
+            // preservando su proporción (sin estirarla) y centrada en ese recuadro.
+            let drawWidth = width, drawHeight = height, offsetX = x, offsetY = y;
+            if (svgWidth > 0 && svgHeight > 0) {
+                const boxAspect = width / height;
+                const svgAspect = svgWidth / svgHeight;
+                if (svgAspect > boxAspect) {
+                    drawHeight = width / svgAspect;
+                    offsetY = y + (height - drawHeight) / 2;
+                } else {
+                    drawWidth = height * svgAspect;
+                    offsetX = x + (width - drawWidth) / 2;
+                }
+            }
+
             // Se adjunta fuera de pantalla: svg2pdf.js necesita el elemento en el DOM para medir estilos
             svgElement.style.position = 'absolute';
             svgElement.style.left = '-9999px';
             document.body.appendChild(svgElement);
-            await doc.svg(svgElement, { x, y, width, height });
+            await doc.svg(svgElement, { x: offsetX, y: offsetY, width: drawWidth, height: drawHeight });
             document.body.removeChild(svgElement);
         }
 
